@@ -1,10 +1,13 @@
-name: Go Build
+name: Go Build and Release
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -21,7 +24,21 @@ jobs:
       run: go mod download
 
     - name: Build
-      run: go build -v -o pingi main.go
+      run: |
+        GOOS=linux GOARCH=amd64 go build -v -o pingi-linux-amd64 main.go
+        chmod +x pingi-linux-amd64
 
     - name: Test Build Execution
-      run: ./pingi -h
+      run: ./pingi-linux-amd64 -h
+
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: latest
+        name: Latest Build
+        draft: false
+        prerelease: false
+        files: pingi-linux-amd64
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
