@@ -11,7 +11,26 @@ permissions:
 
 jobs:
   build:
+    name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: 386
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: windows
+            goarch: 386
+          - goos: freebsd
+            goarch: amd64
+
     steps:
     - uses: actions/checkout@v4
 
@@ -24,21 +43,42 @@ jobs:
       run: go mod download
 
     - name: Build
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
       run: |
-        GOOS=linux GOARCH=amd64 go build -v -o pingi-linux-amd64 main.go
-        chmod +x pingi-linux-amd64
+        BINARY_NAME=pingi-${{ matrix.goos }}-${{ matrix.goarch }}
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          BINARY_NAME="${BINARY_NAME}.exe"
+        fi
+        go build -v -o "$BINARY_NAME" main.go
+        echo "BINARY_PATH=$BINARY_NAME" >> $GITHUB_ENV
 
-    - name: Test Build Execution
-      run: ./pingi-linux-amd64 -h
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pingi-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: ${{ env.BINARY_PATH }}
+
+  release:
+    name: Create Multi-Platform Release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
 
     - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: latest
         name: Latest Build
         draft: false
         prerelease: false
-        files: pingi-linux-amd64
+        files: artifacts/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
