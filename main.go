@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -13,7 +14,7 @@ import (
 )
 
 func main() {
-	ipsFile := flag.String("f", "ips.list", "File containing list of IPs or CIDRs to scan")
+	ipsFile := flag.String("f", "", "File containing list of IPs or CIDRs to scan (use '-' for stdin)")
 	workers := flag.Int("w", 1000, "Number of concurrent workers")
 	timeout := flag.Duration("t", time.Second, "Ping timeout")
 	privileged := flag.Bool("p", false, "Use privileged mode (raw sockets)")
@@ -26,8 +27,36 @@ func main() {
 
 	flag.Parse()
 
+	var inputSource *os.File
+	var err error
+
+	argFile := ""
 	if flag.NArg() > 0 {
-		*ipsFile = flag.Arg(0)
+		argFile = flag.Arg(0)
+	} else {
+		argFile = *ipsFile
+	}
+
+	if argFile == "" || argFile == "-" {
+		// Check if stdin has data (is piped or redirected)
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			inputSource = os.Stdin
+		} else if argFile == "-" {
+			inputSource = os.Stdin
+		} else {
+			// Default fallback if nothing is piped and no file is provided
+			argFile = "ips.list"
+		}
+	}
+
+	if inputSource == nil {
+		inputSource, err = os.Open(argFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", argFile, err)
+			os.Exit(1)
+		}
+		defer inputSource.Close()
 	}
 
 	// Auto-detect privileged mode if not specified
@@ -64,11 +93,8 @@ func main() {
 		done <- true
 	}()
 
-	// Producer: Stream IPs from file
-	err := streamIPs(*ipsFile, jobs)
-	if err != nil {
-		fmt.Printf("Error streaming IPs: %v\n", err)
-	}
+	// Producer: Stream IPs from input source
+	streamIPs(inputSource, jobs)
 	close(jobs)
 
 	wg.Wait()
@@ -88,14 +114,8 @@ func checkUnprivileged() bool {
 	return err == nil
 }
 
-func streamIPs(ipsFile string, jobs chan<- string) error {
-	file, err := os.Open(ipsFile)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
+func streamIPs(input io.Reader, jobs chan<- string) {
+	scanner := bufio.NewScanner(input)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -110,7 +130,9 @@ func streamIPs(ipsFile string, jobs chan<- string) error {
 			jobs <- line
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+	}
 }
 
 type pingResult struct {

@@ -47,7 +47,7 @@ go build -o pingi main.go
 ```bash
 cat targets.txt | ./pingi
 ```
-*(Note: Current implementation uses file paths, but you can always redirect or pipe into files.)*
+*(Note: You can also use `-` to explicitly specify stdin, e.g., `./pingi -f -`)*
 
 ## Why `pingi`?
 
