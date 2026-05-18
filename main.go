@@ -55,26 +55,25 @@ func main() {
 		argFile = *ipsFile
 	}
 
-	if argFile == "" || argFile == "-" {
-		// Check if stdin has data (is piped or redirected)
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			inputSource = os.Stdin
-		} else if argFile == "-" {
-			inputSource = os.Stdin
-		} else {
-			// Default fallback if nothing is piped and no file is provided
-			argFile = "ips.list"
-		}
-	}
-
-	if inputSource == nil {
+	if argFile == "-" {
+		inputSource = os.Stdin
+	} else if argFile != "" {
 		inputSource, err = os.Open(argFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", argFile, err)
 			os.Exit(1)
 		}
 		defer inputSource.Close()
+	} else {
+		// No file or flag provided, check stdin
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			inputSource = os.Stdin
+		} else {
+			// No piped data and no file provided
+			fmt.Fprintf(os.Stderr, "Error: No input provided. Use -f, a filename argument, or pipe data to stdin.\n")
+			os.Exit(1)
+		}
 	}
 
 	// Auto-detect privileged mode if not specified
