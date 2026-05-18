@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,6 +19,9 @@ func main() {
 	workers := flag.Int("w", 1000, "Number of concurrent workers")
 	timeout := flag.Duration("t", time.Second, "Ping timeout")
 	privileged := flag.Bool("p", false, "Use privileged mode (raw sockets)")
+	showLatency := flag.Bool("l", false, "Display latency")
+	minLatency := flag.Duration("min", 0, "Filter results with latency greater than or equal to this (e.g., 20ms)")
+	sortByLatency := flag.Bool("sort", false, "Sort results by latency (disables streaming output)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [ips_file]\n", os.Args[0])
@@ -82,12 +86,26 @@ func main() {
 		}()
 	}
 
+	var collectedResults []pingResult
+	var mu sync.Mutex
+
 	// Receiver/Printer goroutine
 	done := make(chan bool)
 	go func() {
 		for res := range results {
-			if res.up {
-				fmt.Println(res.ip)
+			if !res.up {
+				continue
+			}
+			if *minLatency > 0 && res.latency < *minLatency {
+				continue
+			}
+
+			if *sortByLatency {
+				mu.Lock()
+				collectedResults = append(collectedResults, res)
+				mu.Unlock()
+			} else {
+				printResult(res, *showLatency)
 			}
 		}
 		done <- true
@@ -100,6 +118,23 @@ func main() {
 	wg.Wait()
 	close(results)
 	<-done
+
+	if *sortByLatency {
+		sort.Slice(collectedResults, func(i, j int) bool {
+			return collectedResults[i].latency < collectedResults[j].latency
+		})
+		for _, res := range collectedResults {
+			printResult(res, *showLatency)
+		}
+	}
+}
+
+func printResult(res pingResult, showLatency bool) {
+	if showLatency {
+		fmt.Printf("%s\t%v\n", res.ip, res.latency)
+	} else {
+		fmt.Println(res.ip)
+	}
 }
 
 func checkUnprivileged() bool {
@@ -136,14 +171,15 @@ func streamIPs(input io.Reader, jobs chan<- string) {
 }
 
 type pingResult struct {
-	ip string
-	up bool
+	ip      string
+	up      bool
+	latency time.Duration
 }
 
 func pingIP(ip string, timeout time.Duration, privileged bool) pingResult {
 	pinger, err := probing.NewPinger(ip)
 	if err != nil {
-		return pingResult{ip, false}
+		return pingResult{ip, false, 0}
 	}
 
 	pinger.Count = 1
@@ -152,11 +188,11 @@ func pingIP(ip string, timeout time.Duration, privileged bool) pingResult {
 
 	err = pinger.Run()
 	if err != nil {
-		return pingResult{ip, false}
+		return pingResult{ip, false, 0}
 	}
 
 	stats := pinger.Statistics()
-	return pingResult{ip, stats.PacketsRecv > 0}
+	return pingResult{ip, stats.PacketsRecv > 0, stats.AvgRtt}
 }
 
 func inc(ip net.IP) {
