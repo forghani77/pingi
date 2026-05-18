@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,10 +18,10 @@ import (
 func main() {
 	ipsFile := flag.String("f", "", "File containing list of IPs or CIDRs to scan (use '-' for stdin)")
 	workers := flag.Int("w", 1000, "Number of concurrent workers")
-	timeout := flag.Duration("t", time.Second, "Ping timeout")
+	timeoutRaw := flag.String("t", "1s", "Ping timeout (e.g., 1s, 500ms, or 1000 for 1000ms)")
 	privileged := flag.Bool("p", false, "Use privileged mode (raw sockets)")
 	showLatency := flag.Bool("l", false, "Display latency")
-	minLatency := flag.Duration("min", 0, "Filter results with latency greater than or equal to this (e.g., 20ms)")
+	minLatencyRaw := flag.String("min", "0", "Filter results with latency greater than or equal to this (e.g., 20ms or 20 for 20ms)")
 	sortByLatency := flag.Bool("sort", false, "Sort results by latency (disables streaming output)")
 
 	flag.Usage = func() {
@@ -31,8 +32,21 @@ func main() {
 
 	flag.Parse()
 
+	tVal, err := parseDuration(*timeoutRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid timeout: %v\n", err)
+		os.Exit(1)
+	}
+	timeout := &tVal
+
+	mVal, err := parseDuration(*minLatencyRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid min latency: %v\n", err)
+		os.Exit(1)
+	}
+	minLatency := &mVal
+
 	var inputSource *os.File
-	var err error
 
 	argFile := ""
 	if flag.NArg() > 0 {
@@ -202,4 +216,17 @@ func inc(ip net.IP) {
 			break
 		}
 	}
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d, nil
+	}
+	// Try parsing as raw number (milliseconds)
+	ms, err := strconv.ParseInt(s, 10, 64)
+	if err == nil {
+		return time.Duration(ms) * time.Millisecond, nil
+	}
+	return 0, err
 }
