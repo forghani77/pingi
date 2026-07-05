@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,11 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if *workers <= 0 {
+		fmt.Fprintf(os.Stderr, "Invalid workers count: %d (must be positive)\n", *workers)
+		os.Exit(1)
+	}
 
 	tVal, err := parseDuration(*timeoutRaw)
 	if err != nil {
@@ -165,8 +171,8 @@ func checkUnprivileged() bool {
 func streamIPs(input io.Reader, jobs chan<- string) {
 	scanner := bufio.NewScanner(input)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
@@ -223,8 +229,11 @@ func parseDuration(s string) (time.Duration, error) {
 		return d, nil
 	}
 	// Try parsing as raw number (milliseconds)
-	ms, err := strconv.ParseInt(s, 10, 64)
-	if err == nil {
+	ms, parseErr := strconv.ParseInt(s, 10, 64)
+	if parseErr == nil {
+		if ms < 0 {
+			return 0, fmt.Errorf("duration must be non-negative, got %d", ms)
+		}
 		return time.Duration(ms) * time.Millisecond, nil
 	}
 	return 0, err
